@@ -93,6 +93,28 @@ func (wp *WorkerPool) RemoveWorker(id int) {
 	}
 }
 
+// SubmitJob отправляет задачу в очередь
+func (wp *WorkerPool) SubmitJob(job Job) {
+	select {
+	case wp.jobQueue <- job:
+	case <-wp.ctx.Done():
+	}
+}
+
+// WorkerCount возвращает количество активных рабочих
+func (wp *WorkerPool) WorkerCount() int {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+	return len(wp.workerIDs)
+}
+
+// Stop останавливает пул и все горутины
+func (wp *WorkerPool) Stop() {
+	wp.cancel()
+	wp.wg.Wait()
+	close(wp.jobQueue)
+}
+
 func main() {
 	//	ctx, cancel := context.WithCancel(context.Background())
 	//	defer cancel()
