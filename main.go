@@ -26,34 +26,37 @@ func (p ConsoleProcessor) Process(job Job, workerID int) {
 	time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond)
 }
 
-
 type WorkerPool struct {
-	jobQueue    chan Job        // Channel for jobs
-	processor  JobProcessor
-	workerIDs  map[int]struct{} // map for active workers
-	ctx         context.Context    // Main ctx
-	cancel      context.CancelFunc //Cacnel func for main ctx
-	nextID		int
-	mu         sync.Mutex
-	wg          sync.WaitGroup
+	jobQueue  chan Job // Channel for jobs
+	processor JobProcessor
+	workerIDs map[int]struct{}   // map for active workers
+	workerCtx  map[int]context.CancelFunc // Мапа для хранения функций отмены контекста рабочих
+	ctx       context.Context    // Main ctx
+	cancel    context.CancelFunc //Cacnel func for main ctx
+	nextID    int
+	mu        sync.Mutex
+	wg        sync.WaitGroup
 }
 
 func NewWorkerPool(ctx context.Context, processor JobProcessor) *WorkerPool {
 	poolctx, cancel := context.WithCancel(ctx)
 	return &WorkerPool{
-		jobQueue:    make(chan Job, 100),
-		processor: 	processor,
-		ctx:         poolctx,
-		cancel:      cancel,
+		jobQueue:  make(chan Job, 100),
+		processor: processor,
+		ctx:       poolctx,
+		cancel:    cancel,
 		workerIDs: make(map[int]struct{}),
+		workerCtx:  make(map[int]context.CancelFunc),
 	}
 }
 
-func(wp *WorkerPool) AddWorker(){
+func (wp *WorkerPool) AddWorker() {
 	wp.mu.Lock()
 	id := wp.nextID
 	wp.nextID++
 	wp.workerIDs[id] = struct{}{}
+	workerCtx, cancel := context.WithCancel(wp.ctx)
+	wp.workerCtx[id] = cancel
 	wp.mu.Unlock()
 
 	wp.wg.Add(1)
@@ -61,16 +64,33 @@ func(wp *WorkerPool) AddWorker(){
 		defer wp.wg.Done()
 		defer log.Printf("Worker %d stopped", workerID)
 
-		for{
-			select{
-			case job := <- wp.jobQueue:
+		for {
+			select {
+			case job := <-wp.jobQueue:
 				wp.processor.Process(job, workerID)
+			case <-workerCtx.Done():
+				return
 			case <-wp.ctx.Done():
 				return
 			}
 		}
-	} (id)
+	}(id)
 	log.Printf("Worker %d added", id)
+}
+
+
+func (wp *WorkerPool) RemoveWorker(id int) {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+
+	if _, exists := wp.workerIDs[id]; exists {
+		if cancel, exists := wp.workerCtx[id]; exists {
+			cancel() // Завершаем контекст рабочего
+			delete(wp.workerCtx, id)
+			delete(wp.workerIDs, id)
+			log.Printf("Worker %d removed", id)
+		}
+	}
 }
 
 func main() {
