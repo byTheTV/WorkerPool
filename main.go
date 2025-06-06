@@ -7,6 +7,9 @@ import (
 	"math/rand"
 	"sync"
 	"time"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 type Job struct {
@@ -93,7 +96,6 @@ func (wp *WorkerPool) RemoveWorker(id int) {
 	}
 }
 
-// SubmitJob отправляет задачу в очередь
 func (wp *WorkerPool) SubmitJob(job Job) {
 	select {
 	case wp.jobQueue <- job:
@@ -101,22 +103,101 @@ func (wp *WorkerPool) SubmitJob(job Job) {
 	}
 }
 
-// WorkerCount возвращает количество активных рабочих
 func (wp *WorkerPool) WorkerCount() int {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
 	return len(wp.workerIDs)
 }
 
-// Stop останавливает пул и все горутины
 func (wp *WorkerPool) Stop() {
 	wp.cancel()
 	wp.wg.Wait()
 	close(wp.jobQueue)
 }
+// WorkerPoolMonitor мониторит состояние пула
+type WorkerPoolMonitor struct {
+	pool *WorkerPool
+}
+
+func (m WorkerPoolMonitor) Report() string {
+	return fmt.Sprintf("Workers active: %d", m.pool.WorkerCount())
+}
 
 func main() {
-	//	ctx, cancel := context.WithCancel(context.Background())
-	//	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
+	processor := ConsoleProcessor{}
+
+	pool := NewWorkerPool(ctx, processor)
+
+	for i := 0; i < 3; i++ {
+		pool.AddWorker()
+	}
+
+	// Настраиваем мониторинг
+	monitor := WorkerPoolMonitor{pool: pool}
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				log.Println(monitor.Report())
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	go func() {
+		jobID :=1
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				pool.SubmitJob(Job{
+					ID:   jobID,
+					Data: fmt.Sprintf("Data %d", jobID),
+				})
+				jobID++
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+	}()
+
+	// Ручное управление рабочими для демонстрации
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if rand.Intn(2) == 0 && pool.WorkerCount() > 1 {
+					
+					count := pool.WorkerCount()
+					for id := range pool.workerIDs {
+						if id == count-1 {
+							pool.RemoveWorker(id)
+							break
+						}
+					}
+				} else {
+					pool.AddWorker()
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Обработка сигналов
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+
+	log.Println("Shutting down...")
+	pool.Stop()
+	log.Println("Worker pool stopped")
 }
