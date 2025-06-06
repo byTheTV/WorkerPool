@@ -1,37 +1,54 @@
 package main
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"math/rand"
+	"time"
+	"sync"
+)
 
-
-// Command types for managing workerks
-type CommandType int
-
-type Command struct{
-	Type CommandType 
-	WorkerID int	
+type Job struct {
+	ID   int
+	Data string
 }
+
+type JobProcessor interface {
+	Process(job Job, workerID int)
+}
+
+// Реализует JobProcessor
+type ConsoleProcessor struct{}
+
+func (p ConsoleProcessor) Process(job Job, workerID int) {
+	fmt.Printf("Worker %d: Job %d - %s\n", workerID, job.ID, job.Data)
+	time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond)
+}
+
 
 type WorkerPool struct {
-	jobQueue chan string	// Channel for jobs
-	commandChan chan Command // Channel for worker Commands
-	ctx		context.Context // Main ctx
-	cancel	context.CancelFunc //Cacnel func for main ctx
+	jobQueue    chan string        // Channel for jobs
+	processor  JobProcessor
+	workerIDs  map[int]struct{} // map for active workers
+	ctx         context.Context    // Main ctx
+	cancel      context.CancelFunc //Cacnel func for main ctx
+	mu         sync.Mutex
+	wg          sync.WaitGroup
 }
 
-
-func NewWorkerPool(ctx context.Context) *WorkerPool {
+func NewWorkerPool(ctx context.Context, processor JobProcessor) *WorkerPool {
 	poolctx, cancel := context.WithCancel(ctx)
 	return &WorkerPool{
-		jobQueue: make(chan string),
-		commandChan: make(chan Command),
-		ctx: poolctx,
-		cancel: cancel,
+		jobQueue:    make(chan string),
+		processor: 	processor,
+		ctx:         poolctx,
+		cancel:      cancel,
+		workerIDs: make(map[int]struct{}),
 	}
 }
 
-
 func main() {
-//	ctx, cancel := context.WithCancel(context.Background())
-//	defer cancel()
+	//	ctx, cancel := context.WithCancel(context.Background())
+	//	defer cancel()
 
 }
