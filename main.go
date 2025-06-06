@@ -3,9 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/rand"
-	"time"
 	"sync"
+	"time"
 )
 
 type Job struct {
@@ -27,11 +28,12 @@ func (p ConsoleProcessor) Process(job Job, workerID int) {
 
 
 type WorkerPool struct {
-	jobQueue    chan string        // Channel for jobs
+	jobQueue    chan Job        // Channel for jobs
 	processor  JobProcessor
 	workerIDs  map[int]struct{} // map for active workers
 	ctx         context.Context    // Main ctx
 	cancel      context.CancelFunc //Cacnel func for main ctx
+	nextID		int
 	mu         sync.Mutex
 	wg          sync.WaitGroup
 }
@@ -39,12 +41,36 @@ type WorkerPool struct {
 func NewWorkerPool(ctx context.Context, processor JobProcessor) *WorkerPool {
 	poolctx, cancel := context.WithCancel(ctx)
 	return &WorkerPool{
-		jobQueue:    make(chan string),
+		jobQueue:    make(chan Job, 100),
 		processor: 	processor,
 		ctx:         poolctx,
 		cancel:      cancel,
 		workerIDs: make(map[int]struct{}),
 	}
+}
+
+func(wp *WorkerPool) AddWorker(){
+	wp.mu.Lock()
+	id := wp.nextID
+	wp.nextID++
+	wp.workerIDs[id] = struct{}{}
+	wp.mu.Unlock()
+
+	wp.wg.Add(1)
+	go func(workerID int) {
+		defer wp.wg.Done()
+		defer log.Printf("Worker %d stopped", workerID)
+
+		for{
+			select{
+			case job := <- wp.jobQueue:
+				wp.processor.Process(job, workerID)
+			case <-wp.ctx.Done():
+				return
+			}
+		}
+	} (id)
+	log.Printf("Worker %d added", id)
 }
 
 func main() {
